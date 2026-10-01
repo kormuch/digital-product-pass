@@ -2697,6 +2697,13 @@ class Handler(SimpleHTTPRequestHandler):
             if product:
                 self.audit_read("passport_svg_export", product_id, user)
             return self.send_bytes(passport_svg(product) if product else not_found_svg("product not found"), SVG)
+        if path.startswith("/api/export/passport/") and path.endswith(".pdf"):
+            product_id = path.removeprefix("/api/export/passport/").removesuffix(".pdf")
+            product = self.store.get_product(product_id, user)
+            if product:
+                self.audit_read("passport_pdf_export", product_id, user)
+                return self.send_bytes(passport_pdf(product), "application/pdf", f"passport_{product.get('sku', product_id)}.pdf")
+            return self.send_error_json(HTTPStatus.NOT_FOUND, "product not found")
         return super().do_GET()
 
     def resolve_dpp_scan(self, query: dict[str, list[str]], user: dict[str, Any]) -> None:
@@ -3398,6 +3405,161 @@ def passport_svg(product: dict[str, Any]) -> str:
   <text x="560" y="432" fill="#42534b" font-family="Arial, sans-serif" font-size="18">CO2: {co2} kg | Recyclable: {rec}%</text>
   <text x="72" y="454" fill="#6c7771" font-family="Arial, sans-serif" font-size="16">Thebenpaul product-layer MVP export</text>
 </svg>"""
+
+
+def passport_pdf(product: dict[str, Any]) -> bytes:
+    from fpdf import FPDF
+
+    p = passport(product)
+    name = str(p["product"]["name"])
+    sku = str(p["product"]["sku"])
+    family = str(p["product"]["family"])
+    status = str(p["compliance"]["certification_status"])
+    certs = ", ".join(p["compliance"]["certifications"]) or "None"
+    gtin = str(p["identity"]["gtin"])
+    batch = str(p["identity"]["batch_lot_number"])
+    serial = str(p["identity"]["serial_number"])
+    co2 = str(p["sustainability"]["co2_kg"])
+    rec = str(p["sustainability"]["recyclable_share_pct"])
+    attrs = product.get("attributes", {})
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=20)
+    pdf.add_page()
+
+    # Theben header
+    pdf.set_fill_color(22, 56, 46)
+    pdf.rect(0, 0, 210, 45, "F")
+    pdf.set_text_color(141, 198, 63)
+    pdf.set_font("Helvetica", "B", 24)
+    pdf.set_xy(15, 8)
+    pdf.cell(0, 10, "THEBEN")
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.set_xy(15, 20)
+    pdf.cell(0, 10, "Digital Product Passport")
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_xy(15, 33)
+    pdf.cell(0, 6, f"Generated: {datetime.now(timezone.utc).strftime('%d.%m.%Y %H:%M UTC')} | Thebenpaul Product Layer")
+
+    # Product info
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_xy(15, 55)
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.cell(0, 10, name)
+    pdf.set_xy(15, 67)
+    pdf.set_font("Helvetica", "", 12)
+    pdf.set_text_color(80, 80, 80)
+    pdf.cell(0, 7, f"SKU: {sku}  |  Family: {family}  |  Status: {product.get('lifecycle_status', 'active')}")
+
+    # Compliance section
+    pdf.ln(12)
+    pdf.set_fill_color(22, 56, 46)
+    pdf.set_text_color(22, 56, 46)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, "Compliance")
+    pdf.ln(8)
+    pdf.set_draw_color(141, 198, 63)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(4)
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 11)
+    cert_color = (39, 174, 96) if status == "certified" else (230, 126, 34)
+    pdf.set_text_color(*cert_color)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.cell(0, 7, f"Certification Status: {status.upper()}")
+    pdf.ln(8)
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(0, 6, f"Certifications: {certs}")
+    pdf.ln(8)
+
+    # Identity section
+    pdf.set_text_color(22, 56, 46)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, "Identity")
+    pdf.ln(8)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(4)
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 10)
+    id_fields = [
+        ("GTIN", gtin),
+        ("Batch/Lot", batch),
+        ("Serial Number", serial),
+    ]
+    for label, value in id_fields:
+        pdf.cell(50, 6, f"{label}:")
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.cell(0, 6, value)
+        pdf.set_font("Helvetica", "", 10)
+        pdf.ln(7)
+
+    # Sustainability section
+    pdf.ln(4)
+    pdf.set_text_color(22, 56, 46)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, "Sustainability")
+    pdf.ln(8)
+    pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+    pdf.ln(4)
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(50, 6, "CO2 Footprint:")
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 6, f"{co2} kg")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.ln(7)
+    pdf.cell(50, 6, "Recyclable Share:")
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.cell(0, 6, f"{rec}%")
+    pdf.ln(10)
+
+    # Attributes table
+    if attrs:
+        pdf.set_text_color(22, 56, 46)
+        pdf.set_font("Helvetica", "B", 14)
+        pdf.cell(0, 10, "Product Attributes")
+        pdf.ln(8)
+        pdf.line(15, pdf.get_y(), 195, pdf.get_y())
+        pdf.ln(4)
+
+        # Table header
+        pdf.set_fill_color(22, 56, 46)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(60, 7, "Attribute", border=1, fill=True)
+        pdf.cell(120, 7, "Value", border=1, fill=True)
+        pdf.ln()
+
+        pdf.set_text_color(0, 0, 0)
+        pdf.set_font("Helvetica", "", 9)
+        for key, val in sorted(attrs.items()):
+            if pdf.get_y() > 265:
+                pdf.add_page()
+                pdf.set_fill_color(22, 56, 46)
+                pdf.set_text_color(255, 255, 255)
+                pdf.set_font("Helvetica", "B", 9)
+                pdf.cell(60, 7, "Attribute", border=1, fill=True)
+                pdf.cell(120, 7, "Value", border=1, fill=True)
+                pdf.ln()
+                pdf.set_text_color(0, 0, 0)
+                pdf.set_font("Helvetica", "", 9)
+            val_str = str(val)[:80] if not isinstance(val, (list, dict)) else json.dumps(val, ensure_ascii=False)[:80]
+            pdf.cell(60, 6, str(key), border=1)
+            pdf.cell(120, 6, val_str, border=1)
+            pdf.ln()
+
+    # Footer
+    pdf.ln(10)
+    pdf.set_font("Helvetica", "I", 8)
+    pdf.set_text_color(150, 150, 150)
+    pdf.cell(0, 5, "Thebenpaul Product Layer | Digital Product Passport", align="C")
+
+    return pdf.output()
 
 
 def not_found_html(message: str) -> str:

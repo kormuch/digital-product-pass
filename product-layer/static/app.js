@@ -212,6 +212,7 @@ function renderDetail(product, passport) {
   state.selectedProductRecord = product;
   $("htmlExport").href = `/api/export/passport/${product.id}.html`;
   $("svgExport").href = `/api/export/passport/${product.id}.svg`;
+  $("pdfExport").href = `/api/export/passport/${product.id}.pdf`;
   $("detail").innerHTML = `
     <div class="detail-hero">
       <div>

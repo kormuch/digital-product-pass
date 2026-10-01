@@ -159,6 +159,8 @@ start-paul.bat                # One-click start (all services)
 
 ## Lakehouse Stack
 
+> **Hinweis:** Der Lakehouse-Stack (MinIO, Iceberg, Trino, OpenMetadata) wurde von Christian Solva aufgesetzt — nicht von Korbinian.
+
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | Object Storage | MinIO | S3-compatible, stores Parquet files |
