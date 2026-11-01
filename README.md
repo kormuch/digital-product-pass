@@ -1,292 +1,140 @@
 # PAUL — Product Attribute Unified Layer
 
-**Event:** Kollege Codex — IHK Innovationstage Zollernalb | Mi, 08. Juli 2026, 13:00 Uhr
-**Ort:** Theben AG, Haigerloch
-**Team:** Korbinian Much + Christian Solva
+A Digital Product Pass platform that ingests heterogeneous product data, uses a two-stage AI pipeline to classify and extract structured information, and lets humans review before persisting.
 
 ---
 
-## Problem
+## The Problem
 
-Produktinformationen bei Theben sind über zahlreiche Systeme und Formate verteilt:
-- ERP, PLM, externe Portale, Datenbanken
-- CSV, XLSX, JSON, XML, PDF, Bilder (PNG, JPG, …), REST APIs
-- Dokumente von Produktmanagern, Laboren (Prüfberichte), Tickets, Marketing
+Product information in manufacturing companies is scattered across ERP systems, PLM tools, external portals, and dozens of file formats — CSV, XLSX, JSON, XML, PDF, scanned images. There is no single source of truth, which makes EU Digital Product Passport compliance practically impossible without manual data wrangling at scale.
 
-**Kern-Pain-Point:** Kein Single Source of Truth → kein verlässlicher Digitaler Produktpass möglich.
+## The Solution
 
-Zusätzliche Anforderungsbereiche:
-- Analytics & Reporting (Compliance, KPIs)
-- Cybersecurity (CRA, SBOM)
-- Umwelt & Nachhaltigkeit (CO₂, Materialien, Recycling)
-- Normen & Zertifizierungen (IEC/EN, CE, UL)
-- Regulatorik (CRA, RED, RoHS, REACH, ESPR, Data Act)
-- Lebenszyklus (Einführung, Service Life, End-of-Life)
-
----
-
-## Challenge
-
-Skalierbare, erweiterbare Plattform die:
-
-- Produktdaten aus heterogenen Quellen einsammelt
-- Daten normalisiert und harmonisiert (gemeinsames Datenmodell)
-- Vielzahl von Produktattributen trackt
-- Mehrere Produktfamilien mit unterschiedlichen Eigenschaften unterstützt
-- Flexibles Datenmodell hat das mit neuen Regularien mitwächst
-- Querying, Reporting, Analytics ermöglicht
-- Als Fundament für Digitalen Produktpass dient
-- Interaktives Web-UI bietet (suchen, filtern, bearbeiten, validieren, visualisieren)
-
-**Schlagworte:** Abstraction — Generic — Informative — Interactive
-
----
-
-## Lösung: PAUL
-
-PAUL ingests heterogeneous product data files (datasheets, lab reports, certificates, catalogs, etc.), uses AI to classify and extract structured product information, and lets users review and confirm before persisting. It serves as the data foundation for Digital Product Passports.
-
-### How It Works
-
-```
-Drop files  -->  AI Classifier  -->  AI Extractor  -->  Human Review  -->  Database
- (any format)   (document type)    (product data     (edit, confirm)    (create/update
-                  + confidence)     + citations)                         products)
-                                                                            |
-                                                              Iceberg (Parquet on MinIO)
-                                                                            |
-                                                              OpenMetadata (lineage, catalog)
-```
-
-### Two-Stage AI Pipeline
-
-1. **Classifier Agent** — Reads raw text, determines document type (10 known types), confidence score, reasoning, and detected products
-2. **Extractor Agent** — Per-document-type specialized prompt extracts article numbers, names, attributes, and family suggestions. Every value includes a **citation** showing where in the source document it was found
-
-### Smart Features
-
-- **Confidence gate**: >= 85% auto-extracts, < 85% lets user pick/type document type and retry
-- **Existing product diff**: Shows attribute-level changes (new, changed, kept) when a product already exists
-- **Multi-source detection**: Flags same article number found in multiple files during bulk upload, data is merged on confirm
-- **LLM provider chain**: Ollama LAN (default), DeepSeek, Gemini, Groq — config-driven fallback
-- **OCR support**: Images (PNG, JPG, TIFF, BMP, WEBP) and scanned PDFs via Tesseract OCR (deu+eng)
-- **Bulk upload**: Multiple files at once, serialized processing with rate-limit awareness
-- **Article number validation**: Import blocked until article number is provided for every product
-- **AI transparency**: Full prompt visibility via `GET /api/v1/analyze/prompts` and transparency endpoints
-- **Lakehouse sync**: Confirmed products are automatically mirrored to Apache Iceberg tables
-- **Product-Layer sync**: Auto-export on confirm with retry + exponential backoff
-
-## Quick Start
-
-**One-click start (Windows):**
-```
-start-paul.bat
-```
-Starts all services (data-layer, product-layer, lakehouse infrastructure, OpenMetadata), waits for health checks, opens browser, streams logs.
-
-| Service | URL | Description |
-|---------|-----|-------------|
-| PAUL UI | http://localhost:3000 | AI Ingest, Products, Families |
-| PAUL API | http://localhost:8000/docs | FastAPI Swagger docs |
-| Product Layer | http://localhost:8080 | Governance, DPP preview, exports |
-| Product-Agents Layer | http://localhost:8090 | Product-Experts, Compliance-Agents for relevant Domains like Cyber, EMC, Privacy, etc. |
-| Product-Avatar Layer | http://localhost:8095 | example for UI-Analysis with usage of Product-Agents, Data-layer & bad voice |
-| Graph Layer | http://localhost:8096 | Neo4j product knowledge graph rooted by product numbers |
-| Theben Layer | http://localhost:8098 | Theben-styled competition reports, SBOM, CVE and VEX outputs |
-| Trino UI | http://localhost:8082 | SQL query engine for Iceberg |
-| MinIO Console | http://localhost:9001 | Object storage browser (admin/password) |
-| OpenMetadata | http://localhost:8585 | Data catalog & lineage (admin/admin) |
-| Lakehouse Health | http://localhost:8000/api/v1/lakehouse/health | Trino/Iceberg status |
-| Lakehouse Products | http://localhost:8000/api/v1/lakehouse/products | Query Iceberg tables |
-
-**Manual:**
-```bash
-cd data-layer && docker compose --profile openmetadata up -d --build
-cd ../product-layer && docker compose up -d --build product-layer
-```
-
-**Without OpenMetadata (lighter):**
-```bash
-cd data-layer && docker compose up -d --build
-```
-
-**Requirements:**
-- Docker + Docker Compose
-- ~4 GB RAM for full stack (or ~2 GB without OpenMetadata)
-- `.env` file in `data-layer/` with LLM API keys (optional, defaults to Ollama LAN)
+PAUL accepts any product-related file (datasheets, lab reports, certificates, catalogs, marketing material), runs it through a two-stage AI pipeline that classifies the document type and extracts structured product attributes with source citations, then presents the results for human review before committing to the database. Confirmed data feeds into a lakehouse for analytics and a knowledge graph for relationship queries.
 
 ---
 
 ## Architecture
 
 ```
-data-layer/
-  backend/                    # FastAPI + SQLAlchemy
-    app/
-      api/
-        analyze.py            # AI pipeline endpoints (upload, lookup, re-extract, confirm)
-        families.py           # Product family CRUD
-        products.py           # Product CRUD
-        ingest.py             # Direct file upload to existing products
-        export.py             # Export to product-layer + Iceberg sync
-      intelligence/
-        llm.py                # LLM provider chain (Ollama/DeepSeek/Gemini/Groq)
-        classifier.py         # Stage 1: document type classification
-        extractors.py         # Stage 2: per-type product data extraction
-        text_extract.py       # File-to-text (PDF, CSV, JSON, XML, XLSX, TXT, images via OCR)
-      lakehouse/
-        iceberg_writer.py     # Write products + lineage to Iceberg via Trino
-      models/
-        product.py            # Product, ProductFamily, ProductDocument
-      seed/
-        families.py           # 5 product families (Timer, Motion Sensor, Room Thermostat, KNX Actuator, Energy Meter)
-        seed.py               # Auto-seeds families on startup
-      core/
-        config.py             # Settings
-        database.py           # PostgreSQL connection
-  frontend/                   # React + Vite + Tailwind CSS
-  config/                     # LLM agent config (llm_agents.json)
-  trino/catalog/              # Trino Iceberg connector config
-  init/                       # Iceberg table creation SQL
-  docker-compose.yml          # Full stack (DB, MinIO, Iceberg, Trino, OpenMetadata)
-  test-docs/                  # Test documents for demo
-product-layer/                # Christian's governance layer (DPP, validation, exports)
-graph-layer/                  # Neo4j graph read model for product numbers, lineage, evidence, identity
-theben-layer/                 # Theben corporate identity reports for proprietary REST add-on scenario
-architecture.html             # Visual architecture diagram (open in browser)
-start-paul.bat                # One-click start (all services)
+                         +---------------------------------------------+
+                         |              PAUL Frontend                   |
+                         |         React / Vite / Tailwind              |
+                         +--------------------+------------------------+
+                                              |
+                         +--------------------v------------------------+
+                         |            FastAPI Backend                   |
+                         |                                             |
+                         |  +---------------+    +------------------+  |
+  Drop files ---------->|  |  Classifier    |--->|    Extractor     |  |
+  (any format)          |  |  Agent         |    |    Agent         |  |
+                         |  |  (doc type +   |    |  (attributes +   |  |
+                         |  |   confidence)  |    |   citations)     |  |
+                         |  +---------------+    +--------+---------+  |
+                         |                                |            |
+                         |              Human Review <----+            |
+                         |                   |                         |
+                         +-------------------+-------------------------+
+                                             |
+                    +------------------------+------------------------+
+                    v                        v                        v
+            +--------------+    +--------------------+    +--------------+
+            | PostgreSQL   |    | Lakehouse          |    | Neo4j        |
+            | (primary DB) |    | MinIO > Iceberg >  |    | Knowledge    |
+            |              |    | Trino > OpenMetadata|   | Graph        |
+            +--------------+    +--------------------+    +--------------+
 ```
-
-## Lakehouse Stack
-
-> **Hinweis:** Der Lakehouse-Stack (MinIO, Iceberg, Trino, OpenMetadata) wurde von Christian Solva aufgesetzt — nicht von Korbinian.
-
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| Object Storage | MinIO | S3-compatible, stores Parquet files |
-| Table Format | Apache Iceberg | Versioned tables, schema evolution, time travel |
-| Query Engine | Trino | SQL access to Iceberg tables |
-| Data Catalog | OpenMetadata | Lineage, ownership, quality, classification |
-
-Products confirmed through the AI pipeline are automatically mirrored to Iceberg `product_master` table. Document provenance is tracked in `document_lineage`. Both tables are queryable via Trino SQL.
-
-## Tech Stack
-
-| Component | Technology |
-|-----------|-----------|
-| Backend | Python, FastAPI, SQLAlchemy, uvicorn |
-| Frontend | React, TypeScript, Vite, Tailwind CSS |
-| Database | PostgreSQL 16 |
-| AI / LLM | Ollama LAN (default), DeepSeek, Gemini, Groq (config-driven) |
-| Lakehouse | Apache Iceberg, Trino, MinIO |
-| Data Catalog | OpenMetadata |
-| Graph Database | Neo4j |
-| Infrastructure | Docker Compose |
-| Text extraction | pdfplumber, openpyxl, pytesseract + Pillow (OCR) |
-| OCR Engine | Tesseract (deu + eng) |
 
 ---
 
-## API Endpoints
+## Key Features
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/v1/analyze/` | Upload file, classify, extract |
-| POST | `/api/v1/analyze/lookup` | Check which article numbers exist |
-| POST | `/api/v1/analyze/re-extract` | Re-extract with user-chosen doc type |
-| POST | `/api/v1/analyze/confirm` | Confirm and persist extracted products |
-| GET/POST | `/api/v1/families/` | List / create families |
-| GET/POST | `/api/v1/products/` | List / create products |
-| GET/PATCH/DELETE | `/api/v1/products/{id}` | Product detail / update / delete |
-| POST | `/api/v1/ingest/upload` | Direct file upload to existing product |
-| GET | `/api/v1/export/products.json` | Export to product-layer format |
-| GET | `/api/v1/ingest/documents/{id}/download` | Download original uploaded file |
-| GET | `/api/v1/analyze/prompts` | AI pipeline transparency (prompts, model, config) |
-| GET | `/api/v1/lakehouse/health` | Trino/Iceberg status |
-| GET | `/api/v1/lakehouse/products` | Query Iceberg product_master |
+- **Two-stage AI pipeline** — Classifier Agent determines document type and confidence; Extractor Agent pulls structured attributes with citations back to the source text
+- **Confidence gate** — Documents scoring >= 85% are auto-extracted; below that, the user picks or types the document type for a second pass
+- **Existing product diff** — When a product already exists, attribute-level changes (new, changed, kept) are shown before confirmation
+- **Multi-source detection** — Same article number found across multiple files during bulk upload triggers automatic merge on confirm
+- **LLM provider chain** — Ollama (local), DeepSeek, Gemini, Groq — config-driven fallback so the system works offline or with any provider
+- **OCR support** — Scanned PDFs and images (PNG, JPG, TIFF, BMP, WEBP) processed via Tesseract OCR (German + English)
+- **Lakehouse sync** — Confirmed products are mirrored to Apache Iceberg tables, queryable via Trino SQL
+- **Knowledge graph** — Neo4j graph layer for product relationships, lineage, and evidence tracking
+- **AI transparency** — Full prompt visibility and model configuration exposed via API endpoints
+- **Bulk upload** — Multiple files processed in sequence with rate-limit awareness
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Frontend | React, TypeScript, Vite, Tailwind CSS |
+| Backend | Python, FastAPI, SQLAlchemy |
+| Database | PostgreSQL 16 |
+| AI / LLM | Ollama, DeepSeek, Gemini, Groq (config-driven) |
+| OCR | Tesseract (deu + eng), pdfplumber, pytesseract |
+| Lakehouse | Apache Iceberg, Trino, MinIO |
+| Data Catalog | OpenMetadata |
+| Graph | Neo4j |
+| Infrastructure | Docker Compose |
+
+---
+
+## Quick Start
+
+```bash
+# Full stack (includes OpenMetadata)
+cd data-layer && docker compose --profile openmetadata up -d --build
+
+# Lightweight (without OpenMetadata, ~2 GB RAM)
+cd data-layer && docker compose up -d --build
+```
+
+| Service | URL |
+|---------|-----|
+| PAUL UI | `http://localhost:3000` |
+| PAUL API (Swagger) | `http://localhost:8000/docs` |
+| Trino SQL | `http://localhost:8082` |
+| MinIO Console | `http://localhost:9001` |
+| OpenMetadata | `http://localhost:8585` |
+
+**Requirements:** Docker + Docker Compose, ~4 GB RAM for full stack. Optional `.env` in `data-layer/` for LLM API keys (defaults to local Ollama).
+
+---
+
+## API Overview
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/v1/analyze/` | Upload file — classify and extract |
+| `POST` | `/api/v1/analyze/confirm` | Confirm extracted products and persist |
+| `POST` | `/api/v1/analyze/re-extract` | Re-extract with user-chosen document type |
+| `GET/POST` | `/api/v1/products/` | List or create products |
+| `GET/POST` | `/api/v1/families/` | List or create product families |
+| `GET` | `/api/v1/export/products.json` | Export in product-layer format |
+| `GET` | `/api/v1/analyze/prompts` | AI pipeline transparency |
+| `GET` | `/api/v1/lakehouse/products` | Query Iceberg tables via Trino |
+
+---
+
+## SBOM & Vulnerability Analysis
+
+PAUL includes a supply chain security module that connects to external REST APIs, generates Software Bills of Materials, and checks components against known vulnerabilities.
+
+- **SBOM generation** — Builds CycloneDX 1.5 SBOMs from Bill of Materials data retrieved via REST API
+- **CVE detection** — Checks all BOM components against the NIST National Vulnerability Database
+- **VEX output** — Generates Vulnerability Exploitability eXchange documents for discovered CVEs
+- **Certificate extraction** — Decodes and stores CE certificates (EMC 2014/30/EU, LVD 2014/35/EU, RoHS 2011/65/EU)
+
+Sample results from test data:
+- 41 components identified across 2 products
+- 19 real CVEs found (BLE vulnerabilities, access control bypasses, DoS vectors)
+- Full CycloneDX 1.5 SBOM and VEX documents generated
 
 ---
 
 ## Supported File Formats
 
-| Format | Method | Notes |
-|--------|--------|-------|
-| PDF | pdfplumber | Text + Tabellen; OCR-Fallback für Scans |
-| PNG, JPG, TIFF, BMP, WEBP | pytesseract OCR | Deutsch + Englisch |
-| CSV, TSV | csv module | Pipe-separated output |
-| XLSX, XLS | openpyxl | Alle Sheets, normalisierte Header |
-| JSON | json module | Pretty-print, Fallback auf raw text |
-| XML | ElementTree | Raw UTF-8 |
-| TXT, MD, LOG | Direct read | UTF-8 mit error replace |
+PDF, PNG, JPG, TIFF, BMP, WEBP, CSV, TSV, XLSX, XLS, JSON, XML, TXT, MD, LOG
 
----
-
-## Document Types (AI Classification)
+## Recognized Document Types
 
 Datasheet, Lab Report, Certificate, Software Documentation, Bill of Materials, Marketing Material, Compliance Declaration, Safety Data Sheet, Product Specification, Test Report
-
----
-
-## Add-on Challenge (30 min)
-
-External REST API at `192.168.8.200:8000` with two dummy products (Kaffeemaschine & Staubsauger).
-
-### Tasks
-
-| # | Task | Status |
-|---|------|--------|
-| 1 | **Connect to proprietary REST system** — integrate external API (`/products`, `/products/bom`, `/products/certificate`) into PAUL | done |
-| 2 | **Gather products into data-layer** — add button to import external products via REST into PAUL's database | done |
-| 3 | **Generate Theben-styled PDF** — product report with BOM, certificates, SBOM, CVE/VEX in Theben corporate design (logo from product-layer) | done |
-| 4 | **Extract complete SBOM** — build CycloneDX 1.5 SBOM from BOM API data, brute-force API for hidden endpoints | done |
-| 5 | **Evaluate CVEs & generate VEX** — check BOM components against NIST NVD, generate VEX-formatted vulnerability overview | done |
-
-### External REST API
-
-| Method | Endpoint | Returns |
-|--------|----------|---------|
-| GET | `/products` | List of article numbers `["7654126", "8654126"]` |
-| GET | `/products/bom?articlenumber=<SKU>` | BOM as XML (components, manufacturers, quantities) |
-| GET | `/products/certificate?articlenumber=<SKU>` | CE certificate as base64-encoded PDF |
-
-### Challenge Output
-
-All generated files are in `challenge-output/`:
-
-| File | Description |
-|------|-------------|
-| `04_sbom_cyclonedx.json` | SBOM with 41 components (CycloneDX 1.5) |
-| `05_vex_cyclonedx.json` | VEX with 19 CVEs (ESP32, STM32, Espressif) |
-
-### Results
-
-- **7654126** — Theoretical Fully Automatic Coffee Machine (20 BOM components)
-- **8654126** — Theoretical Smart Vacuum Cleaner (21 BOM components)
-- **41 components** in SBOM across both products
-- **19 real CVEs** found via NIST NVD (BLE vulnerabilities, access control bypasses, DoS)
-- **2 CE certificates** extracted and decoded (EMC 2014/30/EU, LVD 2014/35/EU, RoHS 2011/65/EU)
-
----
-
-## Constraints
-
-- Docker Compose (containerisierte Lösung)
-- Persistenter Storage (Daten überleben Container-Restart)
-- Keine zwingend externen Cloud-Services (lokal/Docker bevorzugt)
-- Open-Source Tech-Stack
-- Konfiguration über Config-Files und/oder Umgebungsvariablen
-
----
-
-## Test Documents
-
-The `data-layer/test-docs/hard/` folder contains realistic Theben-style test files including edge cases:
-
-| File | Challenge |
-|------|-----------|
-| `01_messy_email_thread.txt` | German email with corrections, 2 products buried in prose |
-| `02_ambiguous_brochure.txt` | Marketing fluff mixed with real specs |
-| `03_unknown_product_type.xml` | KNX Gateway — doesn't fit existing families |
-| `04_conflicting_data.csv` | Same product from 5 sources with contradicting values |
-| `05_multi_family_mixed.json` | 7 products across 4+ families (SAP export) |
-| `06_nearly_empty.txt` | Only 4 lines of data |
